@@ -1,5 +1,4 @@
 #! /usr/bin/env python3
-
 import socket
 import struct
 import ipaddress
@@ -10,6 +9,9 @@ import argparse
 parser = argparse.ArgumentParser(description="Sniff Packets Using Sockets")
 parser.add_argument("-i", help="Interface to listen to. By default listens to all interfaces.",
                     default="0.0.0.0")
+parser.add_argument("--proto", help="Protocol to sniff (TCP/ICMP/ALL)", required=True)
+parser.add_argument("--host", help="Host to bind the sniffer to", required=True)
+parser.add_argument("--data", help="Display data", action="store_true")
 
 class Packet:
     def __init__(self, data):
@@ -189,18 +191,43 @@ class Packet:
     def print_header_short(self):
         print(f"Protocol: {self.protocol} {self.src_addr} -> {self.dst_addr}")
 
+    def print_data(self):
+        data = self.packet[20:]
+        print("*"*10 + "ASCII START" + "*"*10)
+        for b in data:
+            if b < 128:
+                print(chr(b), end="")
+            else:
+                print(".", end="")
+        print("*"*10 + "ASCII END" + "*"*10)
 
-def sniff(interface: str):
+
+def sniff(host: str, interface: str, proto: str, data):
     # sniff_proto = socket.IPPROTO_ICMP
+    if proto == "tcp":
+        sniff_proto = socket.IPPROTO_TCP
+    elif proto == "icmp":
+        sniff_proto = socket.IPPROTO_ICMP
+    # elif proto == "ipv4":
+    #     sniff_proto = socket.IPPROTO_IPV4
+    # elif proto == "all":
+    #     # socket.ntohs(0x0003) means capture all packets (IPv4/ARP)
+    #     sniff_proto = socket.ntohs(0x0003)
+    else:
+        print("Unknown protocol!")
+        sys.exit(1)
 
-    sniffer = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-    sniffer.bind(("wlan0", 0))
+    sniffer = socket.socket(socket.AF_INET, socket.SOCK_RAW, sniff_proto)
+    sniffer.bind((host, 0))
+    sniffer.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
 
     while True:
         try:
             raw_data = sniffer.recv(65535)
             packet = Packet(raw_data)
             packet.print_header_short()
+            if data:
+                packet.print_data()
         except KeyboardInterrupt:
             sys.exit(1)
 
@@ -208,4 +235,7 @@ def sniff(interface: str):
 if __name__ == "__main__":
     args = parser.parse_args()
     iface = args.i
-    sniff(iface)
+    proto = args.proto.lower()
+    host = args.host
+    data = args.data
+    sniff(host, iface, proto, data)
