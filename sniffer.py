@@ -8,13 +8,32 @@ import argparse
 
 parser = argparse.ArgumentParser(description="Sniff Packets Using Sockets")
 parser.add_argument("-i", help="Interface to listen to. By default listens to all interfaces.",
-                    default="0.0.0.0")
-parser.add_argument("--proto", help="Protocol to sniff (TCP/ICMP/ALL)", required=True)
-parser.add_argument("--host", help="Host to bind the sniffer to", required=True)
-parser.add_argument("--data", help="Display data", action="store_true")
+                    required=True)
+# parser.add_argument("--proto", help="Protocol to sniff (TCP/ICMP/ALL)", required=True, default="ALL")
+# parser.add_argument("--host", help="Host to bind the sniffer to", required=True, default="0.0.0.0")
+parser.add_argument("--show_data", help="Display data", action="store_true")
+parser.add_argument("--show_mac", help="Display Mac src and dst", action="store_true")
+
 
 class Packet:
     def __init__(self, data):
+        ethernet_header = struct.unpack("!6s6sH", data[:14])
+        self.dst_mac = self.format_mac(ethernet_header[0])
+        self.src_mac = self.format_mac(ethernet_header[1])
+        self.ethernet_type = ethernet_header[2]
+        self.data = data
+
+    def parse_frame(self):
+        if self.ethernet_type == 0x0800:
+            self.parse_ip_packet(self.data[14:])
+            return True
+        elif self.ethernet_type == 0x0806:
+            print("ARP detected. skipping...")
+            return False
+        else:
+            return False
+
+    def parse_ip_packet(self, data):
         self.packet = data
         header = struct.unpack("<BBHHHBBH4s4s", self.packet[0:20])
         self.ver = header[0] >> 4
@@ -118,7 +137,6 @@ class Packet:
             82: "SECURE-VMTP",
             83: "VINES",
             84: "TTP",
-            84: "IPTM",
             85: "NSFNET-IGP",
             86: "DGP",
             87: "TCF",
@@ -187,8 +205,10 @@ class Packet:
         except Exception as e:
             print(f"{e} no protocol for {self.proto}")
             self.protocol = str(self.proto)
+        print("protocol set to", self.protocol)
 
     def print_header_short(self):
+        print(self.ethernet_type)
         print(f"Protocol: {self.protocol} {self.src_addr} -> {self.dst_addr}")
 
     def print_data(self):
@@ -201,33 +221,34 @@ class Packet:
                 print(".", end="")
         print("*"*10 + "ASCII END" + "*"*10)
 
+    def format_mac(self, mac):
+        return ":".join(f"{byte:02x}" for byte in mac)
 
-def sniff(host: str, interface: str, proto: str, data):
-    # sniff_proto = socket.IPPROTO_ICMP
-    if proto == "tcp":
-        sniff_proto = socket.IPPROTO_TCP
-    elif proto == "icmp":
-        sniff_proto = socket.IPPROTO_ICMP
-    # elif proto == "ipv4":
-    #     sniff_proto = socket.IPPROTO_IPV4
-    # elif proto == "all":
-    #     # socket.ntohs(0x0003) means capture all packets (IPv4/ARP)
-    #     sniff_proto = socket.ntohs(0x0003)
-    else:
-        print("Unknown protocol!")
-        sys.exit(1)
+    def print_mac_information(self):
+        print(f"Ethernet Frame - Src MAC: {self.src_mac}, Dst MAC: {self.dst_mac}")
 
-    sniffer = socket.socket(socket.AF_INET, socket.SOCK_RAW, sniff_proto)
-    sniffer.bind((host, 0))
-    sniffer.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+
+def sniff(interface: str, data, mac):
+    sniff_proto = socket.ntohs(0x0003)
+    sniffer = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, sniff_proto)
+    sniffer.bind((interface, 0))
 
     while True:
         try:
             raw_data = sniffer.recv(65535)
+            print("received packet")
             packet = Packet(raw_data)
-            packet.print_header_short()
-            if data:
-                packet.print_data()
+            packet_parsed = packet.parse_frame()
+            if packet_parsed:
+                packet.print_header_short()
+                if mac:
+                    packet.print_mac_information()
+
+                if data:
+                    packet.print_data()
+            else:
+                print("no", packet.ethernet_type)
+                continue
         except KeyboardInterrupt:
             sys.exit(1)
 
@@ -235,7 +256,7 @@ def sniff(host: str, interface: str, proto: str, data):
 if __name__ == "__main__":
     args = parser.parse_args()
     iface = args.i
-    proto = args.proto.lower()
-    host = args.host
-    data = args.data
-    sniff(host, iface, proto, data)
+    # proto = args.proto.lower()
+    data = args.show_data
+    mac = args.show_mac
+    sniff(iface, data, mac)
